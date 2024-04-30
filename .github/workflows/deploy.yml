@@ -1,0 +1,76 @@
+name: Azure Web Apps
+
+on: [push]
+# on: [workflow_dispatch]
+
+env:
+  AZURE_RESOURCE_GROUP_NAME: "azureairg"
+  AZURE_RESOURCE_NAME: "azureexcelfewebapp"
+  AZURE_RESOURCE_DNS_NAME: "https://cenitexchouac.com"
+  AZURE_RESOURCE_BE_SITE_NAME: "https://azureexcelbewebapp.azurewebsites.net"
+  AZURE_RESOURCE_FE_SITE_NAME: "https://azureexcelfewebapp.azurewebsites.net"
+  AZURE_RESOURCE_PACKAGE_PATH: "."
+  NODE_VERSION: "20.x"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Node version
+      uses: actions/setup-node@v2
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: npm install, build, and test
+      run: |
+        npm install
+        npm run build --if-present
+        npm run test --if-present
+
+    - name: Upload artifact for deployment jobs
+      uses: actions/upload-artifact@v2
+      with:
+        name: node-app
+        path: build/
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+    - name: Run Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Run Azure CLI
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          az webapp cors add --resource-group ${{ env.AZURE_RESOURCE_GROUP_NAME }} --name ${{ env.AZURE_RESOURCE_NAME }} --allowed-origins ${{ env.AZURE_RESOURCE_DNS_NAME }}
+          az webapp cors add --resource-group ${{ env.AZURE_RESOURCE_GROUP_NAME }} --name ${{ env.AZURE_RESOURCE_NAME }} --allowed-origins ${{ env.AZURE_RESOURCE_BE_SITE_NAME }}
+          az webapp cors add --resource-group ${{ env.AZURE_RESOURCE_GROUP_NAME }} --name ${{ env.AZURE_RESOURCE_NAME }} --allowed-origins ${{ env.AZURE_RESOURCE_FE_SITE_NAME }}
+          az webapp config set --resource-group ${{ env.AZURE_RESOURCE_GROUP_NAME }} --name ${{ env.AZURE_RESOURCE_NAME }} --startup-file="pm2 serve /home/site/wwwroot --no-daemon --spa"
+
+    - name: Download artifact from build job
+      uses: actions/download-artifact@v2
+      with:
+        name: node-app
+
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      id: deploy-to-webapp
+      with:
+        app-name: ${{ env.AZURE_RESOURCE_NAME }}
+        package: ${{ env.AZURE_RESOURCE_PACKAGE_PATH }}
+        publish-profile: ${{ secrets.AZURE_WEBAPPS_PUBLISH_PROFILE }}
